@@ -1,0 +1,9 @@
+{
+  "price_alerts": [
+    {"symbol": "ETHUSDT", "above": 2500, "below": 1700},
+    {"symbol": "SOLUSDT", "above": 150, "below": 80},
+    {"symbol": "BGBUSDT", "above": 2.5, "below": 1.5}
+  ],
+  "funding_alerts": true,
+  "liquidation_alerts": true
+}
