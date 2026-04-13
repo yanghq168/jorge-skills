@@ -1,0 +1,283 @@
+# Seedance 2.0视频剧本工作流定义
+# Multi-Agent Workflow for Seedance 2.0 Video Script Generation
+# Version: 1.0
+
+workflow:
+  name: seedance_video_script
+  version: "1.0"
+  description: 为Seedance 2.0生成5分钟视频剧本的完整流程
+  
+  # 全局配置
+  config:
+    require_user_confirmation: true
+    confirmation_nodes:
+      - structure_approval       # 剧本结构确认
+      - storyboard_approval      # 分镜确认
+    retry_policy:
+      max_attempts: 2
+      retry_delay_seconds: 3
+    timeout_minutes: 60
+    target_duration: 300        # 目标时长：5分钟 = 300秒
+  
+  # 上下文定义
+  context:
+    requirements:
+      topic: ""                 # 视频主题
+      style: ""                 # 风格（科技感/温馨/搞笑/悬疑等）
+      target_audience: {}       # 目标受众
+      purpose: ""               # 视频目的
+      key_messages: []          # 核心信息
+      tone: ""                  # 语调
+      references: []            # 参考视频/风格
+    script:
+      title: ""                 # 视频标题
+      logline: ""               # 一句话概括
+      structure: {}             # 剧本结构
+      scenes: []                # 场景列表
+    storyboard:
+      shots: []                 # 分镜列表
+      total_duration: 0         # 总时长
+    prompts:
+      shot_prompts: []          # 每个分镜的提示词
+      style_prompts: {}         # 风格提示词
+      negative_prompts: []      # 负面提示词
+    final_package:
+      script_document: ""       # 完整剧本文档
+      storyboard_table: ""      # 分镜表
+      prompt_list: ""           # 提示词列表
+      usage_guide: ""           # 使用说明
+
+  # Agent定义
+  agents:
+    - id: requirement_analyst
+      name: 需求分析Agent
+      description: 深入理解视频需求，明确主题、风格、受众、核心信息
+      skills:
+        - requirement-gathering
+        - audience-analysis
+        - message-definition
+      input:
+        - user.raw_requirement
+      output:
+        - context.requirements.topic
+        - context.requirements.style
+        - context.requirements.target_audience
+        - context.requirements.purpose
+        - context.requirements.key_messages
+        - context.requirements.tone
+      questions:
+        - "这个视频的主要目的是什么？（品牌宣传/产品介绍/教育科普/故事讲述）"
+        - "目标受众是谁？（年龄/职业/兴趣）"
+        - "希望传达什么核心信息？"
+        - " preferred风格是什么？（科技感/温馨/搞笑/悬疑/纪实）"
+        - "有参考视频或风格偏好吗？"
+        - "需要旁白/配音吗？语言是？"
+      
+    - id: script_structurer
+      name: 剧本结构Agent
+      description: 设计5分钟视频的整体结构，包括开头、发展、高潮、结尾
+      skills:
+        - script-structure
+        - narrative-design
+        - pacing-control
+      depends_on:
+        - requirement_analyst
+      input:
+        - context.requirements
+      output:
+        - context.script.title
+        - context.script.logline
+        - context.script.structure
+        - context.script.scenes
+      structure_template:
+        five_minute_structure:
+          opening:
+            duration: "0:00-0:30"
+            percentage: 10
+            purpose: "吸引注意，建立情境"
+          development:
+            duration: "0:30-3:30"
+            percentage: 60
+            purpose: "展开内容，递进信息"
+          climax:
+            duration: "3:30-4:30"
+            percentage: 20
+            purpose: "高潮点，核心展示"
+          ending:
+            duration: "4:30-5:00"
+            percentage: 10
+            purpose: "总结升华，行动号召"
+      checkpoint: structure_approval
+      
+    - id: storyboard_designer
+      name: 分镜设计Agent
+      description: 为每个场景设计详细分镜，包括画面描述、运镜、时长
+      skills:
+        - cinematography
+        - visual-storytelling
+        - shot-design
+      depends_on:
+        - script_structurer
+      input:
+        - context.script.structure
+        - context.script.scenes
+        - context.requirements.style
+      output:
+        - context.storyboard.shots
+        - context.storyboard.total_duration
+      shot_types:
+        - "广角 establishing shot"
+        - "中景 medium shot"
+        - "特写 close-up"
+        - "过肩镜头 over-shoulder"
+        - "POV镜头 point-of-view"
+        - "航拍 aerial"
+      camera_movements:
+        - "static 固定"
+        - "pan 摇镜头"
+        - "tilt 俯仰"
+        - "dolly 推拉"
+        - "truck 横移"
+        - "handheld 手持"
+      checkpoint: storyboard_approval
+      
+    - id: prompt_engineer
+      name: 提示词生成Agent
+      description: 将分镜转化为Seedance 2.0可用的英文提示词
+      skills:
+        - prompt-engineering
+        - ai-video-generation
+        - visual-description
+      depends_on:
+        - storyboard_designer
+      input:
+        - context.storyboard.shots
+        - context.requirements.style
+      output:
+        - context.prompts.shot_prompts
+        - context.prompts.style_prompts
+        - context.prompts.negative_prompts
+      prompt_guidelines:
+        language: "English"
+        structure: "[Subject], [Action], [Environment], [Lighting], [Camera], [Style], [Quality]"
+        seedance_tips:
+          - "使用具体、详细的描述"
+          - "避免抽象概念，用视觉化语言"
+          - "指定镜头类型和角度"
+          - "描述光影效果和氛围"
+          - "包含风格关键词（cinematic, photorealistic等）"
+      
+    - id: quality_reviewer
+      name: 审核优化Agent
+      description: 检查剧本完整性、时长准确性、提示词质量
+      skills:
+        - quality-assurance
+        - script-review
+        - prompt-optimization
+      depends_on:
+        - prompt_engineer
+      input:
+        - context.script
+        - context.storyboard
+        - context.prompts
+      output:
+        - context.final_package.script_document
+        - context.final_package.storyboard_table
+        - context.final_package.prompt_list
+        - context.final_package.usage_guide
+        - review_report
+      checklist:
+        - "总时长是否正好5分钟（300秒）"
+        - "分镜数量是否合理（20-30个）"
+        - "叙事结构是否完整"
+        - "提示词是否清晰可执行"
+        - "风格是否一致"
+        - "是否有Seedance不支持的内容"
+
+  # 执行流程定义
+  execution:
+    sequence:
+      - agent: requirement_analyst
+        timeout: 10
+        on_complete:
+          action: notify_user
+          message: "需求分析完成，正在设计剧本结构..."
+        
+      - agent: script_structurer
+        timeout: 15
+        on_complete:
+          action: pause_for_confirmation
+          message: "剧本结构设计完成，请确认后再继续分镜设计"
+        
+      - agent: storyboard_designer
+        timeout: 20
+        on_complete:
+          action: pause_for_confirmation
+          message: "分镜设计完成，请确认后再生成提示词"
+        
+      - agent: prompt_engineer
+        timeout: 15
+        on_complete:
+          action: notify_user
+          message: "提示词生成完成，正在进行最终审核..."
+        
+      - agent: quality_reviewer
+        timeout: 10
+        
+    output:
+      format: markdown
+      sections:
+        - title: "视频概述"
+          source: context.script
+        - title: "剧本正文"
+          source: context.script.scenes
+        - title: "分镜表"
+          source: context.storyboard
+        - title: "Seedance提示词"
+          source: context.prompts
+        - title: "使用说明"
+          source: context.final_package.usage_guide
+
+  # 异常处理规则
+  error_handling:
+    requirement_analyst_failed:
+      action: retry
+      max_retries: 1
+      fallback: use_default_template
+      
+    script_structurer_failed:
+      action: retry
+      max_retries: 2
+      fallback: use_standard_structure
+      
+    storyboard_designer_failed:
+      action: retry
+      max_retries: 2
+      fallback: simplify_storyboard
+      
+    prompt_engineer_failed:
+      action: retry
+      max_retries: 2
+      fallback: manual_prompt_list
+      
+    default:
+      action: notify_user_and_wait
+
+  # Seedance 2.0特定配置
+  seedance_config:
+    max_duration: 300           # 5分钟
+    supported_resolutions:
+      - "1080p"
+      - "720p"
+    supported_aspect_ratios:
+      - "16:9"
+      - "9:16"
+      - "1:1"
+    recommended_shot_duration:
+      min: 5                    # 最短5秒
+      max: 20                   # 最长20秒
+    generation_tips:
+      - "复杂场景建议拆分为多个短镜头"
+      - "人物特写效果通常更好"
+      - "避免过于快速的动作"
+      - "指定光线条件可获得更好效果"

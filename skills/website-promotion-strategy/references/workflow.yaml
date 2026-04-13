@@ -1,0 +1,233 @@
+# 网站宣传策略工作流定义
+# Multi-Agent Workflow for Website Promotion Strategy
+# Version: 1.0
+
+workflow:
+  name: website_promotion_strategy
+  version: "1.0"
+  description: 基于网站内容自动生成完整宣传策略
+  
+  # 全局配置
+  config:
+    require_user_confirmation: true
+    confirmation_nodes:
+      - strategy_direction_approval  # 策略方向确认
+    retry_policy:
+      max_attempts: 2
+      retry_delay_seconds: 3
+    timeout_minutes: 45
+  
+  # 上下文定义
+  context:
+    website:
+      url: ""                   # 目标网站URL
+      name: ""                # 网站/产品名称
+      description: ""         # 网站描述
+      industry: ""            # 所属行业
+      positioning: ""         # 定位
+      target_audience: {}     # 目标受众
+      core_features: []       # 核心功能/卖点
+      value_proposition: ""   # 价值主张
+      visual_style: {}        # 视觉风格
+      tone_of_voice: ""       # 语调风格
+    analysis:
+      strengths: []           # 优势
+      weaknesses: []          # 劣势
+      opportunities: []       # 机会
+      threats: []             # 威胁
+    competitors:
+      list: []                # 竞品列表
+      strategies: {}          # 竞品策略分析
+      gaps: []                # 市场空白点
+    strategy:
+      positioning_statement: ""   # 定位宣言
+      key_messages: []            # 核心信息
+      differentiation: ""         # 差异化策略
+      campaign_concepts: []       # 活动创意
+    content:
+      taglines: []              # 标语口号
+      copy_variations: {}       # 各渠道文案
+      visual_concepts: []       # 视觉概念
+      video_scripts: []         # 视频脚本
+    distribution:
+      channel_mix: {}           # 渠道组合
+      budget_allocation: {}     # 预算分配
+      timeline: {}              # 时间线
+
+  # Agent定义
+  agents:
+    - id: website_analyzer
+      name: 网站分析Agent
+      description: 爬取目标网站，分析产品定位、目标受众、核心卖点、视觉风格
+      skills:
+        - web-scraping
+        - content-analysis
+        - brand-positioning
+      input:
+        - website.url
+      output:
+        - context.website.name
+        - context.website.description
+        - context.website.industry
+        - context.website.positioning
+        - context.website.target_audience
+        - context.website.core_features
+        - context.website.value_proposition
+        - context.website.visual_style
+        - context.website.tone_of_voice
+      tools:
+        - browser_automation    # 浏览器自动化
+        - screenshot_capture    # 页面截图
+        - text_extraction      # 文本提取
+      
+    - id: competitor_analyst
+      name: 竞品分析Agent
+      description: 分析行业竞品，识别市场机会和差异化空间
+      skills:
+        - competitive-analysis
+        - market-research
+        - gap-analysis
+      depends_on:
+        - website_analyzer
+      input:
+        - context.website.industry
+        - context.website.positioning
+        - context.website.target_audience
+      output:
+        - context.competitors.list
+        - context.competitors.strategies
+        - context.competitors.gaps
+        - context.analysis.opportunities
+        - context.analysis.threats
+      tools:
+        - web_search           # 搜索竞品信息
+        - data_analysis        # 数据分析
+      
+    - id: strategy_planner
+      name: 宣传策略Agent
+      description: 基于网站分析和竞品洞察制定宣传策略
+      skills:
+        - marketing-strategy
+        - brand-positioning
+        - campaign-planning
+      depends_on:
+        - competitor_analyst
+      input:
+        - context.website
+        - context.competitors
+        - context.analysis
+      output:
+        - context.strategy.positioning_statement
+        - context.strategy.key_messages
+        - context.strategy.differentiation
+        - context.strategy.campaign_concepts
+      checkpoint: strategy_direction_approval
+      
+    - id: content_creator
+      name: 内容创作Agent
+      description: 根据策略创作宣传内容，包括文案、视觉概念、视频脚本
+      skills:
+        - copywriting
+        - creative-concept
+        - script-writing
+      depends_on:
+        - strategy_planner
+      input:
+        - context.strategy
+        - context.website
+      output:
+        - context.content.taglines
+        - context.content.copy_variations
+        - context.content.visual_concepts
+        - context.content.video_scripts
+      
+    - id: channel_planner
+      name: 渠道规划Agent
+      description: 制定渠道组合策略和投放计划
+      skills:
+        - channel-strategy
+        - media-planning
+        - budget-allocation
+      depends_on:
+        - content_creator
+      input:
+        - context.website.target_audience
+        - context.strategy
+        - context.content
+      output:
+        - context.distribution.channel_mix
+        - context.distribution.budget_allocation
+        - context.distribution.timeline
+
+  # 执行流程定义
+  execution:
+    sequence:
+      - agent: website_analyzer
+        timeout: 15
+        on_complete:
+          action: notify_user
+          message: "网站分析完成，正在进行竞品分析..."
+        
+      - agent: competitor_analyst
+        timeout: 20
+        on_complete:
+          action: notify_user
+          message: "竞品分析完成，正在制定宣传策略..."
+        
+      - agent: strategy_planner
+        timeout: 15
+        on_complete:
+          action: pause_for_confirmation
+          message: "宣传策略方向已确定，请确认后再生成具体内容"
+        
+      - parallel:
+        - agent: content_creator
+          timeout: 25
+        - agent: channel_planner
+          timeout: 15
+          
+    output:
+      format: markdown
+      sections:
+        - title: "网站分析"
+          source: context.website
+        - title: "竞品洞察"
+          source: context.competitors
+        - title: "宣传策略"
+          source: context.strategy
+        - title: "内容素材"
+          source: context.content
+        - title: "渠道计划"
+          source: context.distribution
+
+  # 异常处理规则
+  error_handling:
+    website_analyzer_failed:
+      action: retry
+      max_retries: 2
+      fallback: ask_user_for_manual_input
+      
+    competitor_analyst_failed:
+      action: retry
+      max_retries: 1
+      fallback: skip_and_continue
+      
+    strategy_planner_failed:
+      action: retry
+      max_retries: 2
+      fallback: use_template_strategy
+      
+    default:
+      action: notify_user_and_wait
+
+  # 工具配置
+  tools:
+    web_scraping:
+      respect_robots_txt: true
+      delay_between_requests: 1
+      max_pages: 10
+      
+    browser_automation:
+      headless: true
+      screenshot: true
+      viewport: "1920x1080"

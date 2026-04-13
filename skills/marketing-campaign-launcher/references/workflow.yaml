@@ -1,0 +1,199 @@
+# 营销活动启动工作流定义
+# Multi-Agent Workflow for Marketing Campaign Launch
+# Version: 1.0
+
+workflow:
+  name: marketing_campaign_launch
+  version: "1.0"
+  description: 从需求分析到执行监控的完整营销活动启动流程
+  
+  # 全局配置
+  config:
+    # 是否在关键节点暂停等待用户确认
+    require_user_confirmation: true
+    # 关键节点列表
+    confirmation_nodes:
+      - strategy_approval  # 策略方案审批
+      - content_review     # 内容审核
+    # 失败重试配置
+    retry_policy:
+      max_attempts: 2
+      retry_delay_seconds: 5
+    # 超时配置（分钟）
+    timeout_minutes: 30
+  
+  # 上下文定义 - 在各Agent间共享的数据结构
+  context:
+    campaign:
+      name: ""              # 活动名称
+      type: ""              # 活动类型（新品发布/促销/品牌活动等）
+      product_info: {}      # 产品信息
+      target_audience: {}   # 目标受众
+      budget: 0             # 预算
+      timeline: {}          # 时间线
+    strategy:
+      positioning: ""       # 定位策略
+      key_messages: []      # 核心信息
+      channels: []          # 渠道策略
+      kpis: []              # 关键指标
+    content:
+      copywriting: {}       # 文案素材
+      visual_concepts: []   # 视觉概念
+      multimedia: {}        # 多媒体素材
+    distribution:
+      schedule: {}          # 发布计划
+      channel_configs: {}   # 各渠道配置
+    monitoring:
+      metrics: {}           # 监控指标
+      alert_thresholds: {}  # 告警阈值
+
+  # Agent定义
+  agents:
+    - id: requirement_analyst
+      name: 需求分析Agent
+      description: 收集和分析营销活动需求，明确目标受众、预算、时间等关键信息
+      skills:
+        - market-research
+        - user-persona-analysis
+      input:
+        - context.campaign.type
+        - user.raw_requirement
+      output:
+        - context.campaign.product_info
+        - context.campaign.target_audience
+        - context.campaign.budget
+        - context.campaign.timeline
+        - context.campaign.name
+      
+    - id: strategy_planner
+      name: 策略制定Agent
+      description: 基于需求分析结果制定营销策略，包括定位、核心信息、渠道选择
+      skills:
+        - marketing-strategy
+        - competitive-analysis
+      depends_on:
+        - requirement_analyst
+      input:
+        - context.campaign
+      output:
+        - context.strategy.positioning
+        - context.strategy.key_messages
+        - context.strategy.channels
+        - context.strategy.kpis
+      checkpoint: strategy_approval  # 用户确认点
+      
+    - id: content_creator
+      name: 内容创作Agent
+      description: 根据策略创作营销内容，包括文案、视觉概念、多媒体素材
+      skills:
+        - copywriting
+        - visual-design
+        - content-generation
+      depends_on:
+        - strategy_planner
+      input:
+        - context.strategy
+        - context.campaign.product_info
+      output:
+        - context.content.copywriting
+        - context.content.visual_concepts
+        - context.content.multimedia
+      checkpoint: content_review  # 用户确认点
+      
+    - id: channel_distributor
+      name: 渠道分发Agent
+      description: 制定内容分发计划，配置各渠道参数，安排发布时间表
+      skills:
+        - channel-management
+        - scheduling
+        - automation
+      depends_on:
+        - content_creator
+      input:
+        - context.content
+        - context.strategy.channels
+        - context.campaign.timeline
+      output:
+        - context.distribution.schedule
+        - context.distribution.channel_configs
+      
+    - id: data_monitor
+      name: 数据监控Agent
+      description: 设计数据监控方案，配置追踪指标和告警阈值
+      skills:
+        - analytics
+        - monitoring-setup
+        - reporting
+      depends_on:
+        - strategy_planner
+      input:
+        - context.strategy.kpis
+        - context.distribution.schedule
+      output:
+        - context.monitoring.metrics
+        - context.monitoring.alert_thresholds
+
+  # 执行流程定义
+  execution:
+    # 顺序执行节点
+    sequence:
+      - agent: requirement_analyst
+        timeout: 10
+        
+      - agent: strategy_planner
+        timeout: 15
+        on_complete: 
+          action: pause_for_confirmation
+          message: "营销策略方案已生成，请确认是否继续执行内容创作"
+        
+      - parallel:  # 内容创作和数据监控可以并行
+        - agent: content_creator
+          timeout: 20
+          on_complete:
+            action: pause_for_confirmation
+            message: "营销内容已创作完成，请确认是否继续分发"
+            
+        - agent: data_monitor
+          timeout: 10
+          
+      - agent: channel_distributor
+        timeout: 15
+        
+    # 完成后的输出整合
+    output:
+      format: markdown
+      sections:
+        - title: "活动概述"
+          source: context.campaign
+        - title: "营销策略"
+          source: context.strategy
+        - title: "内容素材"
+          source: context.content
+        - title: "分发计划"
+          source: context.distribution
+        - title: "监控方案"
+          source: context.monitoring
+
+  # 异常处理规则
+  error_handling:
+    # 需求分析失败
+    requirement_analyst_failed:
+      action: retry
+      max_retries: 2
+      fallback: ask_user_for_manual_input
+      
+    # 策略制定失败
+    strategy_planner_failed:
+      action: retry
+      max_retries: 1
+      fallback: use_default_template
+      
+    # 内容创作失败
+    content_creator_failed:
+      action: retry
+      max_retries: 2
+      fallback: skip_and_continue
+      
+    # 其他失败
+    default:
+      action: notify_user_and_wait

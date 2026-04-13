@@ -1,0 +1,315 @@
+# 安全应急响应工作流定义
+# Multi-Agent Workflow for Security Incident Response
+# Version: 1.0
+
+workflow:
+  name: security_incident_response
+  version: "1.0"
+  description: 从事件发现到复盘总结的完整安全应急响应流程
+  
+  # 全局配置
+  config:
+    # 安全事件响应跳过常规确认，追求速度
+    require_user_confirmation: false
+    # 但以下情况仍需确认
+    confirmation_nodes:
+      - service_shutdown_approval  # 服务下线需确认
+      - data_deletion_approval     # 数据删除需确认
+    # 失败快速重试
+    retry_policy:
+      max_attempts: 3
+      retry_delay_seconds: 2
+    # 超时配置（分钟）- 安全事件响应要快速
+    timeout_minutes: 60
+    # 自动升级配置
+    auto_escalation:
+      enabled: true
+      p0_escalation_minutes: 5
+      p1_escalation_minutes: 15
+  
+  # 上下文定义
+  context:
+    incident:
+      id: ""                    # 事件ID（自动生成）
+      title: ""                 # 事件标题
+      severity: ""              # 严重级别 P0/P1/P2/P3
+      status: "detected"        # 状态: detected/analyzing/responding/mitigated/resolved/closed
+      detection_time: ""        # 发现时间
+      reporter: ""              # 报告人
+      affected_systems: []      # 受影响系统列表
+      attack_vectors: []        # 攻击向量
+      impact_assessment: {}     # 影响评估
+    analysis:
+      root_cause: ""            # 根因分析
+      attack_timeline: []       # 攻击时间线
+      indicators: {}            # IOC指标
+    response:
+      containment_actions: []   # 遏制措施
+      eradication_actions: []   # 根除措施
+      recovery_actions: []      # 恢复措施
+    communication:
+      notifications_sent: []    # 已发送通知
+      status_updates: []        # 状态更新
+    forensics:
+      evidence_collected: []    # 已收集证据
+      logs_preserved: []        # 已保留日志
+      attack_path: ""           # 攻击路径
+    closure:
+      lessons_learned: []       # 经验教训
+      improvements: []          # 改进建议
+      preventive_measures: []   # 预防措施
+
+  # Agent定义
+  agents:
+    - id: security_analyst
+      name: 安全分析Agent
+      description: 快速评估安全事件严重级别，确定影响范围和响应策略
+      skills:
+        - threat-analysis
+        - log-analysis
+        - impact-assessment
+      input:
+        - incident.description
+        - incident.detection_source
+        - system.logs
+      output:
+        - context.incident.severity
+        - context.incident.affected_systems
+        - context.incident.attack_vectors
+        - context.incident.impact_assessment
+        - context.analysis.indicators
+      priority: critical  # 最高优先级
+      
+    - id: communicator
+      name: 通知沟通Agent
+      description: 根据事件严重级别通知相关人员和团队，维护状态更新
+      skills:
+        - alert-management
+        - status-communication
+        - stakeholder-management
+      depends_on:
+        - security_analyst
+      input:
+        - context.incident.severity
+        - context.incident.affected_systems
+        - context.analysis.root_cause
+      output:
+        - context.communication.notifications_sent
+        - context.communication.status_updates
+      conditional:
+        # 不同级别通知不同人员
+        p0: notify_all_immediately
+        p1: notify_management_and_team
+        p2: notify_team_leads
+        p3: notify_email_only
+      
+    - id: remediation_engineer
+      name: 漏洞修复Agent
+      description: 执行遏制、根除、恢复措施，修复安全漏洞
+      skills:
+        - incident-containment
+        - vulnerability-remediation
+        - system-recovery
+      depends_on:
+        - security_analyst
+      input:
+        - context.incident.affected_systems
+        - context.incident.attack_vectors
+        - context.analysis.indicators
+      output:
+        - context.response.containment_actions
+        - context.response.eradication_actions
+        - context.response.recovery_actions
+      checkpoint: service_shutdown_approval
+      # 安全修复可部分并行
+      parallel_with:
+        - communicator
+        - forensics_investigator
+      
+    - id: forensics_investigator
+      name: 取证调查Agent
+      description: 收集和保存证据，重构攻击路径，生成取证报告
+      skills:
+        - digital-forensics
+        - log-analysis
+        - attack-reconstruction
+      depends_on:
+        - security_analyst
+      input:
+        - context.incident.affected_systems
+        - context.incident.attack_vectors
+        - context.analysis.indicators
+      output:
+        - context.forensics.evidence_collected
+        - context.forensics.logs_preserved
+        - context.forensics.attack_path
+        - context.analysis.attack_timeline
+        - context.analysis.root_cause
+      parallel_with:
+        - communicator
+        - remediation_engineer
+      
+    - id: incident_closure
+      name: 事件闭环Agent
+      description: 总结事件处理过程，输出报告，提出改进建议
+      skills:
+        - incident-documentation
+        - post-mortem-analysis
+        - process-improvement
+      depends_on:
+        - communicator
+        - remediation_engineer
+        - forensics_investigator
+      input:
+        - context.incident
+        - context.analysis
+        - context.response
+        - context.communication
+        - context.forensics
+      output:
+        - context.closure.lessons_learned
+        - context.closure.improvements
+        - context.closure.preventive_measures
+        - incident.final_report
+
+  # 执行流程定义
+  execution:
+    # 阶段1: 事件分析（串行，必须快）
+    phase_1_analysis:
+      - agent: security_analyst
+        timeout: 10
+        on_severity_determined:
+          p0:
+            action: escalate_immediately
+            notify: ["CTO", "安全总监", "运维负责人"]
+          p1:
+            action: escalate_with_delay
+            notify: ["安全负责人", "技术负责人"]
+            delay_minutes: 15
+    
+    # 阶段2: 并行响应
+    phase_2_response:
+      parallel:
+        - agent: communicator
+          timeout: 5
+          priority: high
+          
+        - agent: remediation_engineer
+          timeout: 30
+          priority: critical
+          on_progress:
+            - milestone: containment_complete
+              notify: ["指挥官"]
+            - milestone: eradication_complete
+              notify: ["指挥官"]
+            - milestone: recovery_complete
+              notify: ["指挥官"]
+              # 恢复完成可触发监控Agent检查
+              trigger: verify_system_health
+              
+        - agent: forensics_investigator
+          timeout: 45
+          priority: medium
+          # 取证可延后启动，优先保证止损
+          delay_minutes: 5
+    
+    # 阶段3: 事件闭环
+    phase_3_closure:
+      - agent: incident_closure
+        timeout: 20
+        trigger: when_all_phase_2_complete
+
+    # 完成后的输出整合
+    output:
+      format: markdown
+      sections:
+        - title: "事件概述"
+          source: context.incident
+        - title: "影响分析"
+          source: context.analysis
+        - title: "响应措施"
+          source: context.response
+        - title: "取证结果"
+          source: context.forensics
+        - title: "沟通记录"
+          source: context.communication
+        - title: "复盘总结"
+          source: context.closure
+
+  # 自动升级规则
+  escalation:
+    p0_incident:
+      conditions:
+        - severity: "P0"
+      actions:
+        - create_war_room
+        - page_on_call_immediately
+        - notify_executive_team
+        - bypass_approval_for_emergency_actions
+      
+    response_timeout:
+      conditions:
+        - agent: "remediation_engineer"
+          timeout_minutes: 30
+      actions:
+        - escalate_to_senior_engineer
+        - consider_external_support
+        
+    evidence_tampering:
+      conditions:
+        - evidence_deleted: true
+      actions:
+        - preserve_remaining_logs
+        - notify_legal_team
+        - document_chain_of_custody_break
+
+  # 异常处理规则
+  error_handling:
+    # 安全分析失败 - 最严重，无法继续
+    security_analyst_failed:
+      action: escalate_to_human_expert
+      fallback: manual_triage
+      
+    # 修复失败
+    remediation_engineer_failed:
+      action: retry
+      max_retries: 2
+      fallback: escalate_to_senior
+      
+    # 取证失败
+    forensics_investigator_failed:
+      action: retry
+      max_retries: 1
+      fallback: preserve_logs_and_continue
+      
+    # 通知失败（不能阻塞修复）
+    communicator_failed:
+      action: log_and_continue
+      fallback: send_email_only
+      
+    # 其他失败
+    default:
+      action: log_and_notify
+      fallback: continue_with_warning
+
+  # 与外部系统集成
+  integrations:
+    monitoring_systems:
+      - name: "Zabbix"
+        trigger: auto_create_incident
+      - name: "Prometheus"
+        trigger: auto_create_incident
+        
+    ticketing_systems:
+      - name: "Jira"
+        action: create_security_ticket
+      - name: "ServiceNow"
+        action: create_incident_record
+        
+    communication_channels:
+      - name: "Slack"
+        action: post_to_security_channel
+      - name: "企业微信"
+        action: send_alert_message
+      - name: "PagerDuty"
+        action: page_on_call_engineer
