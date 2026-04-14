@@ -128,7 +128,13 @@ def get_top_liquidations():
     try:
         resp = requests.get(f"{BINANCE_FAPI}/fapi/v1/allForceOrders?limit=200", timeout=15)
         orders = resp.json()
-        
+
+        # API可能返回错误对象或已下线
+        if isinstance(orders, dict):
+            error_msg = orders.get('msg', '未知错误')
+            print(f"获取爆仓数据API不可用: {error_msg}")
+            return []
+
         liquidations = []
         for order in orders:
             liquidations.append({
@@ -139,7 +145,7 @@ def get_top_liquidations():
                 'value': float(order['origQty']) * float(order['avgPrice']),
                 'time': order['time']
             })
-        
+
         liquidations.sort(key=lambda x: x['value'], reverse=True)
         return liquidations[:10]
     except Exception as e:

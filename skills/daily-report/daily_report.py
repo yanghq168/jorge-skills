@@ -90,57 +90,70 @@ def get_quanquan_work(date):
     """获取权权管家的工作记录"""
     import re
     memory_file = MEMORY_DIR / f"{date.strftime('%Y-%m-%d')}.md"
-    
+
     if not memory_file.exists():
         return ['今日暂无工作记录']
-    
+
     content = memory_file.read_text(encoding='utf-8')
     work_items = []
-    
+
+    # 原有模式匹配
     patterns = [
         r"- \[权权管家\] (.+)",
         r"- \[AI\] (.+)",
         r"- \[我\] (.+)",
         r"- \[暴躁小龙虾\] (.+)"
     ]
-    
+
     for pattern in patterns:
         matches = re.findall(pattern, content)
         work_items.extend(matches)
-    
+
+    # 匹配 ### 时间 格式的日程
+    schedule_pattern = r"###\s+(\d{2}:\d{2}(?:\s+-\s+\d{2}:\d{2})?)\s+(.+)"
+    schedule_matches = re.findall(schedule_pattern, content)
+    for time_range, task in schedule_matches:
+        work_items.append(f"[{time_range}] {task.strip()}")
+
+    # 匹配 ## ✅ 完成事项 下的列表
+    in_completed_section = False
+    for line in content.split('\n'):
+        line = line.strip()
+
+        # 检测是否进入完成事项区块
+        if any(marker in line for marker in ['## ✅', '## 完成', '### ✅', '### 完成', '## 📋', '## 今日完成']):
+            in_completed_section = True
+            continue
+
+        # 检测离开完成事项区块（遇到新的 ## 标题）
+        if in_completed_section and line.startswith('## ') and not any(marker in line for marker in ['完成', '✅']):
+            in_completed_section = False
+            continue
+
+        # 在完成事项区块内，匹配 - [x] 或 - 开头的任务
+        if in_completed_section:
+            if line.startswith('- [x]') or line.startswith('- [X]'):
+                item = line.replace('- [x]', '').replace('- [X]', '').strip()
+                if item and item not in work_items:
+                    work_items.append(item)
+            elif line.startswith('- ') and not line.startswith('- [ ]'):
+                item = line[2:].strip()
+                # 过滤掉子任务和空行
+                if item and len(item) > 3 and not item.startswith('-') and not item.startswith('*'):
+                    # 去掉 **加粗** 标记
+                    item = re.sub(r'\*\*(.+?)\*\*', r'\1', item)
+                    if item not in work_items:
+                        work_items.append(item)
+
+    # 匹配 - **xxx**: 格式的条目（原有逻辑）
     for line in content.split('\n'):
         if line.startswith('- **') and any(k in line for k in ['完成', '修复', '创建', '配置', '部署', '优化', '添加', '更新', '设置', '生成', '推送', '翻译', '备份', '修复', '新增']):
             item = line.lstrip('- **').rstrip('**').strip()
             # 过滤掉元数据
             if not any(skip in item.lower() for skip in ['最后更新', 'agent 总数', '分类数量']):
-                work_items.append(item)
-    
-    # 新增：匹配 Completed Tasks 下的项目
-    if 'Completed Tasks' in content or '### Completed' in content:
-        # 匹配 #### 开头的任务标题
-        task_matches = re.findall(r'#### \d+\.\s*(.+)', content)
-        for match in task_matches:
-            match_clean = match.strip()
-            # 过滤掉元数据条目
-            if match_clean and len(match_clean) > 3 and not any(skip in match_clean.lower() for skip in ['total files', 'all categories', 'translation scope', 'encoding', 'repository', 'files modified']):
-                if match_clean not in work_items:
-                    work_items.append(match_clean)
-        
-        # 匹配 - **xxx**: 格式的条目，但只取有意义的
-        bullet_matches = re.findall(r'- \*\*(.+?)\*\*[:\s]*(.+)?', content)
-        for match in bullet_matches:
-            item = match[0].strip()
-            # 过滤元数据
-            if any(skip in item.lower() for skip in ['total', 'all categories', 'translation scope', 'encoding', 'repository', 'files modified', '最后更新', 'agent 总数', '分类数量']):
-                continue
-            if match[1]:
-                desc = match[1].strip()
-                # 过滤掉统计类内容
-                if not any(skip in desc.lower() for skip in ['个)', 'agent files', 'categories']):
-                    item += f": {desc}"
-            if item and item not in work_items and len(item) > 3:
-                work_items.append(item)
-    
+                if item not in work_items:
+                    work_items.append(item)
+
     return work_items if work_items else ['今日暂无工作记录']
 
 
