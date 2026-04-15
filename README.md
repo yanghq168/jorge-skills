@@ -3,7 +3,7 @@
 > **权权管家(仓库)** 自动维护的 SKILL 配置与脚本备份
 
 ![Skills](https://img.shields.io/badge/Skills-17-blue?style=flat-square)
-![Updated](https://img.shields.io/badge/Updated_2026_04_15-green?style=flat-square)
+![Updated](https://img.shields.io/badge/Updated_2026_04_16-green?style=flat-square)
 
 ---
 
@@ -61,7 +61,7 @@
 
 ## 📅 备份信息
 
-- **备份时间: 2026-04-15
+- **备份时间: 2026-04-16
 - **SKILL 总数**: 17 个
 - **备份频率**: 每日自动备份
 - **仓库**: [jorge-skills](https://github.com/yanghq168/jorge-skills)
