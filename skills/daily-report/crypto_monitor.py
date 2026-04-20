@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """
-合约交易辅助系统 - Pro 版
-价格预警 + 市场数据 + 链上监控
-使用统一邮件模板，专业样式
+合约交易辅助系统 - 价格预警 + 市场数据 + 链上监控
+使用统一邮件模板系统
 """
 
 import requests
 import json
 import smtplib
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 
 # 导入统一邮件模板
-sys.path.insert(0, '/root/.openclaw/workspace/scripts')
 from email_templates import create_crypto_email
 
 # 配置
@@ -57,12 +55,12 @@ BINANCE_SPOT_API = "https://api.binance.com"
 
 
 def get_market_data(symbol):
-    """获取合约市场数据"""
+    """获取合约市场数据（带现货备用）"""
     try:
-        # BGB特殊处理
+        # BGB特殊处理（用CoinGecko）
         if symbol == 'BGBUSDT':
             resp = requests.get(
-                "https://api.coingecko.com/api/v3/simple/price?ids=bitget-token&vs_currencies=usd&include_24hr_change=true",
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitget-token&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_last_updated_at=true",
                 timeout=15
             )
             data = resp.json()
@@ -71,7 +69,7 @@ def get_market_data(symbol):
                 'symbol': symbol,
                 'price': bgb['usd'],
                 'price_change_24h': bgb.get('usd_24h_change', 0),
-                'volume_24h': 0,
+                'volume_24h': bgb.get('usd_24h_vol', 0),
                 'high_24h': 0,
                 'low_24h': 0,
                 'open_interest': 0,
@@ -82,7 +80,7 @@ def get_market_data(symbol):
         price_resp = requests.get(f"{BINANCE_FAPI}/fapi/v1/ticker/price?symbol={symbol}", timeout=10)
         price_data = price_resp.json()
         
-        if 'code' in price_data:
+        if 'code' in price_data:  # 合约不存在，尝试现货
             spot_resp = requests.get(f"{BINANCE_SPOT_API}/api/v3/ticker/24hr?symbol={symbol}", timeout=10)
             spot_data = spot_resp.json()
             
@@ -99,12 +97,15 @@ def get_market_data(symbol):
         
         price = float(price_data['price'])
         
+        # 24h统计
         stats_resp = requests.get(f"{BINANCE_FAPI}/fapi/v1/ticker/24hr?symbol={symbol}", timeout=10)
         stats = stats_resp.json()
         
+        # 持仓量
         open_interest_resp = requests.get(f"{BINANCE_FAPI}/fapi/v1/openInterest?symbol={symbol}", timeout=10)
         open_interest = float(open_interest_resp.json()['openInterest'])
         
+        # 资金费率
         funding_resp = requests.get(f"{BINANCE_FAPI}/fapi/v1/premiumIndex?symbol={symbol}", timeout=10)
         funding = float(funding_resp.json()['lastFundingRate']) * 100
         
@@ -128,13 +129,7 @@ def get_top_liquidations():
     try:
         resp = requests.get(f"{BINANCE_FAPI}/fapi/v1/allForceOrders?limit=200", timeout=15)
         orders = resp.json()
-
-        # API可能返回错误对象或已下线
-        if isinstance(orders, dict):
-            error_msg = orders.get('msg', '未知错误')
-            print(f"获取爆仓数据API不可用: {error_msg}")
-            return []
-
+        
         liquidations = []
         for order in orders:
             liquidations.append({
@@ -145,7 +140,8 @@ def get_top_liquidations():
                 'value': float(order['origQty']) * float(order['avgPrice']),
                 'time': order['time']
             })
-
+        
+        # 按金额排序
         liquidations.sort(key=lambda x: x['value'], reverse=True)
         return liquidations[:10]
     except Exception as e:
@@ -168,6 +164,7 @@ def get_funding_rates():
                 'mark_price': float(item['markPrice'])
             })
         
+        # 按费率绝对值排序
         rates.sort(key=lambda x: abs(x['rate']), reverse=True)
         return rates[:15]
     except Exception as e:
@@ -217,7 +214,7 @@ def check_funding_alerts(rates):
     alerts = []
     
     for rate in rates:
-        if abs(rate['rate']) > 0.1:
+        if abs(rate['rate']) > 0.1:  # 资金费率超过0.1%
             direction = "多头付费极高" if rate['rate'] > 0 else "空头付费极高"
             alerts.append({
                 'type': 'funding_extreme',
@@ -232,7 +229,7 @@ def check_funding_alerts(rates):
 # ============ 邮件发送 ============
 
 def send_email(subject, html_content, text_content):
-    """发送邮件（同时发送 HTML 和纯文本版本）"""
+    """发送邮件"""
     config = load_config()
     
     smtp_server = config.get('smtp_server', 'smtp.qq.com')
@@ -250,7 +247,7 @@ def send_email(subject, html_content, text_content):
         msg['From'] = f"=?utf-8?b?5p2D5p2D5YW755qE6Jm+77yI5oqV6LWE77yJ?= <{smtp_user}>"
         msg['To'] = to_email
         
-        # 添加纯文本版本
+        # 添加纯文本版本（优先）
         text_part = MIMEText(text_content, 'plain', 'utf-8')
         msg.attach(text_part)
         
@@ -274,7 +271,7 @@ def send_email(subject, html_content, text_content):
 
 def generate_market_report():
     """生成市场数据报告"""
-    symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'BGBUSDT', 'HYPEUSDT']
+    symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'BGBUSDT']
     
     print("📊 获取市场数据...")
     prices = {}
@@ -292,6 +289,7 @@ def generate_market_report():
     funding_rates = get_funding_rates()
     print(f"  ✓ 获取到 {len(funding_rates)} 个币种费率")
     
+    # 检查预警
     print("\n🔔 检查预警条件...")
     price_alerts = check_price_alerts(prices)
     funding_alerts = check_funding_alerts(funding_rates)
@@ -304,116 +302,127 @@ def generate_market_report():
 
 
 def generate_report(prices, liquidations, funding_rates, alerts):
-    """生成报告 - 使用专业模板"""
+    """生成报告内容"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     
-    # 使用加密货币主题模板
+    # 使用统一模板
     email = create_crypto_email("📊 合约市场监控", f"实时数据 · {now}")
     
-    # 添加预警
+    # 预警区块
     if alerts:
         alert_items = []
         for alert in alerts:
-            alert_type = "up" if "突破" in alert['message'] else "down"
+            alert_type = 'danger' if alert['type'].startswith('price') else 'warning'
             alert_items.append({
-                'icon': '🚨' if "突破" in alert['message'] else '⚠️',
+                'icon': '🚨' if alert_type == 'danger' else '⚠️',
                 'text': alert['message'],
-                'type': alert_type
+                'type': 'down' if alert_type == 'danger' else 'neutral'
             })
-        email.add_alert_box("🔔 预警提醒", alert_items, "critical" if any(a['type'].startswith('price') for a in alerts) else "warning")
+        email.add_alert_box("🔔 预警提醒", alert_items, alert_type="warning")
     
-    # 添加价格数据表格
+    # 合约行情表格
     price_rows = []
     for symbol, data in prices.items():
-        change_class = "change-up" if data['price_change_24h'] >= 0 else "change-down"
         change_sign = "+" if data['price_change_24h'] >= 0 else ""
-        funding_class = "highlight-high" if abs(data['funding_rate']) > 0.05 else ""
-        
+        oi_str = f"{data['open_interest']/1e6:.2f}M" if data['open_interest'] > 0 else "N/A"
+        funding_str = f"{data['funding_rate']:.4f}%"
         price_rows.append([
-            f"<strong>{symbol.replace('USDT', '')}</strong>",
+            symbol.replace('USDT', ''),
             f"${data['price']:,.2f}",
-            f'<span class="{change_class}">{change_sign}{data["price_change_24h"]:.2f}%</span>',
-            f"{data['open_interest']/1e6:.2f}M",
-            f'<span class="{funding_class}">{data["funding_rate"]:.4f}%</span>'
+            f"{change_sign}{data['price_change_24h']:.2f}%",
+            oi_str,
+            funding_str
         ])
     
     if price_rows:
-        price_html = '<table>\n<tr><th>币种</th><th>价格</th><th>24h涨跌</th><th>持仓量</th><th>资金费率</th></tr>\n'
-        for row in price_rows:
-            price_html += f"<tr><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td><td>{row[3]}</td><td>{row[4]}</td></tr>\n"
-        price_html += '</table>'
-        email.add_section("📈 合约行情", "📈", price_html)
+        email.add_table(
+            "📈 合约行情",
+            "📈",
+            ["币种", "价格", "24h涨跌", "持仓量", "资金费率"],
+            price_rows,
+            highlight_column=2,
+            highlight_func=lambda x: 'change-up' if '+' in str(x) else ('change-down' if '-' in str(x) else '')
+        )
     
-    # 添加资金费率排行
+    # 资金费率排行表格
     funding_rows = []
     for rate in funding_rates[:10]:
-        funding_class = "highlight-high" if abs(rate['rate']) > 0.1 else ("highlight-medium" if abs(rate['rate']) > 0.05 else "")
         direction = "📈" if rate['rate'] > 0 else "📉"
         funding_rows.append([
             rate['symbol'].replace('USDT', ''),
-            f'<span class="{funding_class}">{direction} {rate["rate"]:.4f}%</span>',
+            f"{direction} {rate['rate']:.4f}%",
             f"${rate['mark_price']:,.2f}"
         ])
     
     if funding_rows:
-        funding_html = '<table>\n<tr><th>币种</th><th>资金费率</th><th>标记价格</th></tr>\n'
-        for row in funding_rows:
-            funding_html += f"<tr><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td></tr>\n"
-        funding_html += '</table>'
-        email.add_section("💰 资金费率排行", "💰", funding_html)
+        email.add_table(
+            "💰 资金费率排行",
+            "💰",
+            ["币种", "资金费率", "标记价格"],
+            funding_rows,
+            highlight_column=1,
+            highlight_func=lambda x: 'highlight-high' if any(c in str(x) for c in ['📈', '📉']) and abs(float(str(x).split()[1].replace('%', ''))) > 0.1 else ''
+        )
     
-    # 添加爆仓数据
+    # 爆仓数据表格
     liq_rows = []
     for liq in liquidations[:10]:
-        side_class = "change-down" if liq['side'] == '多军爆仓' else "change-up"
         liq_rows.append([
             liq['symbol'].replace('USDT', ''),
-            f'<span class="{side_class}">{liq["side"]}</span>',
+            liq['side'],
             f"{liq['qty']:.4f}",
             f"${liq['value']:,.0f}"
         ])
     
     if liq_rows:
-        liq_html = '<table>\n<tr><th>币种</th><th>方向</th><th>数量</th><th>价值</th></tr>\n'
-        for row in liq_rows:
-            liq_html += f"<tr><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td><td>{row[3]}</td></tr>\n"
-        liq_html += '</table>'
-        email.add_section("💥 近期大额爆仓", "💥", liq_html)
+        email.add_table(
+            "💥 近期大额爆仓",
+            "💥",
+            ["币种", "方向", "数量", "价值"],
+            liq_rows
+        )
     
-    # 添加统计
+    # 统计栏
     email.add_stats_bar([
-        {'icon': '📊', 'label': '监控币种', 'value': f"{len(prices)} 个"},
-        {'icon': '💥', 'label': '爆仓记录', 'value': f"{len(liquidations)} 条"},
-        {'icon': '🔔', 'label': '预警触发', 'value': f"{len(alerts)} 个"},
+        {'icon': '📊', 'label': '监控币种', 'value': f'{len(prices)} 个'},
+        {'icon': '🔔', 'label': '预警', 'value': f'{len(alerts)} 个'},
+        {'icon': '⏰', 'label': '时间', 'value': now},
     ])
     
     # 生成纯文本版本
-    text_content = f"""📊 合约市场监控 - {now}
-
-"""
+    text_lines = [f"📊 合约市场监控 - {now}", "=" * 40, ""]
+    
     if alerts:
-        text_content += "🔔 预警提醒:\n"
+        text_lines.append("【🔔 预警提醒】")
         for alert in alerts:
-            text_content += f"  {alert['message']}\n"
-        text_content += "\n"
+            text_lines.append(f"  {alert['message']}")
+        text_lines.append("")
     
-    text_content += "📈 合约行情:\n"
-    for symbol, data in prices.items():
-        change_sign = "+" if data['price_change_24h'] >= 0 else ""
-        text_content += f"  {symbol}: ${data['price']:,.2f} ({change_sign}{data['price_change_24h']:.2f}%)\n"
+    if prices:
+        text_lines.append("【📈 合约行情】")
+        for symbol, data in prices.items():
+            change_sign = "+" if data['price_change_24h'] >= 0 else ""
+            text_lines.append(f"  {symbol}: ${data['price']:,.2f} ({change_sign}{data['price_change_24h']:.2f}%)")
+        text_lines.append("")
     
-    text_content += "\n💰 资金费率排行:\n"
-    for rate in funding_rates[:5]:
-        direction = "📈" if rate['rate'] > 0 else "📉"
-        text_content += f"  {rate['symbol']}: {direction} {rate['rate']:.4f}%\n"
+    if funding_rates:
+        text_lines.append("【💰 资金费率排行】")
+        for rate in funding_rates[:5]:
+            direction = "多" if rate['rate'] > 0 else "空"
+            text_lines.append(f"  {rate['symbol']}: {rate['rate']:.4f}% ({direction})")
+        text_lines.append("")
     
-    text_content += "\n💥 大额爆仓:\n"
-    for liq in liquidations[:5]:
-        text_content += f"  {liq['symbol']} {liq['side']}: ${liq['value']:,.0f}\n"
+    if liquidations:
+        text_lines.append("【💥 近期大额爆仓】")
+        for liq in liquidations[:5]:
+            text_lines.append(f"  {liq['symbol']} {liq['side']}: ${liq['value']:,.0f}")
+        text_lines.append("")
     
-    text_content += "\n🦞 由权权龙虾管家生成 · 数据来源: Binance Futures"
+    text_lines.append("=" * 40)
+    text_lines.append("🦞 权权管家生成 · 数据来源: Binance Futures")
+    text_lines.append("⚠️ 仅供参考，不构成投资建议")
     
-    return email.render(), text_content
+    return email.render(), '\n'.join(text_lines)
 
 
 def main():
@@ -422,7 +431,7 @@ def main():
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
     
-    # 检查是否在静默时段
+    # 检查是否在静默时段（凌晨1:00-7:00不推送）
     current_hour = datetime.now().hour
     if 1 <= current_hour < 7:
         print(f"\n😴 当前时间 {current_hour}:00 处于静默时段（01:00-07:00）")
@@ -444,10 +453,10 @@ def main():
     
     # 发送邮件
     now = datetime.now().strftime("%H:%M")
-    has_alerts = "🚨" if alerts else "📊"
-    subject = f"{has_alerts} 合约市场监控 - {now}"
+    subject = f"📊 合约市场监控 - {now}"
     success = send_email(subject, html, text)
     
+    # 如果有预警，额外提示
     if alerts:
         print(f"\n🔔 发现 {len(alerts)} 个预警！")
     

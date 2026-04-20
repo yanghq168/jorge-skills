@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """
-AI + 区块链 晚间新闻晚报 - Pro 版
-使用统一邮件模板，专业样式
+AI + 区块链 晚间新闻晚报
 每天晚上9点自动发送
+使用统一邮件模板系统
 """
 
 import requests
 import feedparser
 import json
-import re
-import os
-import sys
 import smtplib
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # 导入统一邮件模板
-sys.path.insert(0, '/root/.openclaw/workspace/scripts')
 from email_templates import create_news_email
 
 # 加载日报配置
@@ -77,7 +74,7 @@ def fetch_rss(source_id, source_info):
         feed = feedparser.parse(resp.content)
         
         articles = []
-        for entry in feed.entries[:5]:
+        for entry in feed.entries[:5]:  # 每个源最多5条
             articles.append({
                 'title': entry.get('title', ''),
                 'link': entry.get('link', ''),
@@ -110,6 +107,7 @@ def fetch_all_news():
     """抓取所有新闻"""
     all_news = {'ai': [], 'blockchain': [], 'both': [], 'other': []}
     
+    # 抓取AI新闻
     print("📰 抓取AI新闻...")
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(fetch_rss, k, v): k for k, v in AI_SOURCES.items()}
@@ -119,6 +117,7 @@ def fetch_all_news():
                 cat = classify_news(article['title'], article['summary'])
                 all_news[cat].append(article)
     
+    # 抓取区块链新闻
     print("⛓️  抓取区块链新闻...")
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(fetch_rss, k, v): k for k, v in BLOCKCHAIN_SOURCES.items()}
@@ -138,81 +137,96 @@ def deduplicate_news(news_list):
     seen = set()
     unique = []
     for item in news_list:
-        key = item['title'][:30]
+        key = item['title'][:30]  # 用标题前30字去重
         if key not in seen:
             seen.add(key)
             unique.append(item)
-    return unique[:10]
+    return unique[:10]  # 每类最多10条
 
 
-def generate_email_content(news_data):
-    """生成邮件内容 - 使用专业模板"""
+def build_news_html(news_items, is_blockchain=False):
+    """构建新闻列表HTML"""
+    if not news_items:
+        return '<div style="color: #999; font-style: italic; text-align: center; padding: 20px;">今日暂无相关新闻</div>'
+    
+    html = ''
+    for item in news_items:
+        title = item['title']
+        link = item['link']
+        source = item['source']
+        summary = item['summary'][:100] + '...' if len(item['summary']) > 100 else item['summary']
+        
+        bg_color = '#fff7e6' if is_blockchain else '#f6ffed'
+        border_color = '#fa8c16' if is_blockchain else '#52c41a'
+        source_color = '#fa8c16' if is_blockchain else '#52c41a'
+        
+        html += f'''
+        <div style="background: {bg_color}; border-left: 4px solid {border_color}; padding: 12px 15px; margin-bottom: 10px; border-radius: 0 6px 6px 0;">
+            <a href="{link}" style="font-weight: 500; color: #1890ff; text-decoration: none; display: block; margin-bottom: 5px;" target="_blank">{title}</a>
+            <span style="font-size: 12px; color: {source_color}; background: {bg_color}; padding: 2px 8px; border-radius: 10px; display: inline-block;">{source}</span>
+            {f'<div style="font-size: 13px; color: #666; margin-top: 6px; line-height: 1.5;">{summary}</div>' if summary else ''}
+        </div>'''
+    
+    return html
+
+
+def build_news_text(news_items, is_blockchain=False):
+    """构建新闻列表纯文本"""
+    if not news_items:
+        return "今日暂无相关新闻\n"
+    
+    lines = []
+    for item in news_items:
+        lines.append(f"• {item['title']}")
+        lines.append(f"  来源: {item['source']} | 链接: {item['link']}")
+        if item['summary']:
+            lines.append(f"  摘要: {item['summary'][:80]}...")
+        lines.append("")
+    
+    return '\n'.join(lines)
+
+
+def generate_email(news_data):
+    """生成邮件内容"""
     today = datetime.now().strftime("%Y年%m月%d日")
     
     ai_news = deduplicate_news(news_data.get('ai', []) + news_data.get('both', []))
     blockchain_news = deduplicate_news(news_data.get('blockchain', []) + news_data.get('both', []))
     
-    # 使用新闻主题模板（晚报用深色主题）
+    # 使用统一模板
     email = create_news_email("🌙 晚间新闻晚报", f"AI · 区块链 · 每日精选 · {today}")
     
-    # 添加AI新闻
-    if ai_news:
-        ai_rows = []
-        for item in ai_news[:8]:
-            title = item['title']
-            source = item['source']
-            link = item['link']
-            ai_rows.append([f"<a href='{link}' target='_blank' style='color:#3498db;text-decoration:none;'>{title}</a>", source])
-        
-        ai_html = '<table>\n<tr><th>标题</th><th>来源</th></tr>\n'
-        for row in ai_rows:
-            ai_html += f'<tr><td>{row[0]}</td><td><span class="badge badge-new">{row[1]}</span></td></tr>\n'
-        ai_html += '</table>'
-        email.add_section("🤖 AI 人工智能", "🤖", ai_html)
+    # 添加AI新闻区块
+    ai_html = build_news_html(ai_news, is_blockchain=False)
+    email.add_section("🤖 AI 人工智能", "🤖", ai_html)
     
-    # 添加区块链新闻
-    if blockchain_news:
-        bc_rows = []
-        for item in blockchain_news[:8]:
-            title = item['title']
-            source = item['source']
-            link = item['link']
-            bc_rows.append([f"<a href='{link}' target='_blank' style='color:#3498db;text-decoration:none;'>{title}</a>", source])
-        
-        bc_html = '<table>\n<tr><th>标题</th><th>来源</th></tr>\n'
-        for row in bc_rows:
-            bc_html += f'<tr><td>{row[0]}</td><td><span class="badge badge-new" style="background:#fff7e6;color:#e67e22;">{row[1]}</span></td></tr>\n'
-        bc_html += '</table>'
-        email.add_section("⛓️ 区块链 & Web3", "⛓️", bc_html)
+    # 添加区块链新闻区块
+    bc_html = build_news_html(blockchain_news, is_blockchain=True)
+    email.add_section("⛓️ 区块链 & Web3", "⛓️", bc_html)
     
-    # 添加统计
+    # 添加统计栏
     email.add_stats_bar([
-        {'icon': '🤖', 'label': 'AI新闻', 'value': f"{len(ai_news)} 条"},
-        {'icon': '⛓️', 'label': '区块链', 'value': f"{len(blockchain_news)} 条"},
-        {'icon': '📰', 'label': '总计', 'value': f"{len(ai_news) + len(blockchain_news)} 条"},
+        {'icon': '📰', 'label': 'AI新闻', 'value': f'{len(ai_news)} 条'},
+        {'icon': '⛓️', 'label': '区块链新闻', 'value': f'{len(blockchain_news)} 条'},
+        {'icon': '📅', 'label': '日期', 'value': today},
     ])
     
     # 生成纯文本版本
-    text_content = f"""🌙 晚间新闻晚报 - {today}
-
-🤖 AI 人工智能 ({len(ai_news)} 条):
-"""
-    for item in ai_news[:5]:
-        text_content += f"  • [{item['source']}] {item['title']}\n"
-        text_content += f"    {item['link']}\n"
-    
-    text_content += f"\n⛓️ 区块链 & Web3 ({len(blockchain_news)} 条):\n"
-    for item in blockchain_news[:5]:
-        text_content += f"  • [{item['source']}] {item['title']}\n"
-        text_content += f"    {item['link']}\n"
-    
-    text_content += "\n🦞 由暴躁小龙虾自动生成 · 每天晚上9:00送达"
+    text_content = f"🌙 晚间新闻晚报 - {today}\n"
+    text_content += f"AI · 区块链 · 每日精选\n"
+    text_content += "=" * 40 + "\n\n"
+    text_content += f"【🤖 AI 人工智能】({len(ai_news)}条)\n"
+    text_content += build_news_text(ai_news)
+    text_content += f"【⛓️ 区块链 & Web3】({len(blockchain_news)}条)\n"
+    text_content += build_news_text(blockchain_news, is_blockchain=True)
+    text_content += "=" * 40 + "\n"
+    text_content += "🦞 由暴躁小龙虾自动生成 · 每天晚上9:00送达\n"
     
     return email.render(), text_content
 
 
 def send_email(subject, html_content, text_content):
-    """发送邮件（同时发送 HTML 和纯文本版本）"""
+    """发送邮件"""
     config = load_config()
     
     smtp_server = config.get('smtp_server', 'smtp.qq.com')
@@ -230,7 +244,7 @@ def send_email(subject, html_content, text_content):
         msg['From'] = f"=?utf-8?b?5p2D5p2D5YW755qE6Jm+77yIV0VCM++8iQ==?= <{smtp_user}>"
         msg['To'] = to_email
         
-        # 添加纯文本版本
+        # 添加纯文本版本（优先）
         text_part = MIMEText(text_content, 'plain', 'utf-8')
         msg.attach(text_part)
         
@@ -266,7 +280,7 @@ def main():
     print(f"   两者都有: {len(news_data['both'])} 条")
     
     # 生成邮件
-    html, text = generate_email_content(news_data)
+    html, text = generate_email(news_data)
     
     # 保存预览
     preview_file = '/tmp/evening_news.html'

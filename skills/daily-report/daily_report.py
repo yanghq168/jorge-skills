@@ -258,10 +258,203 @@ def generate_agents_table():
     return html, len(agents), has_work
 
 
-def generate_daily_report():
-    """生成日报内容"""
-    today = datetime.now()
-    date_str = today.strftime("%Y年%m月%d日")
+def generate_daily_report_for_date(target_date):
+    """生成指定日期的日报内容"""
+    date_str = target_date.strftime("%Y年%m月%d日")
+    
+    # 使用统一模板
+    email = create_daily_email("📋 每日工作日报", f"{date_str} · 权权管家指挥中心")
+    
+    # 1. 添加权权管家工作模块
+    quanquan_html, quanquan_work = generate_quanquan_section_for_date(target_date)
+    email.add_section("🦞 权权管家今日工作", "🦞", quanquan_html, highlight=True)
+    
+    # 2. 添加Agent优化追踪模块（仅当有变更时显示）
+    opt_html, opt_count = generate_optimization_section_for_date(target_date)
+    if opt_html:
+        email.add_section("🚀 今日Agent优化", "🚀", opt_html, highlight=True)
+    
+    # 3. 添加全体Agent工作表格
+    agents_html, agent_count, has_work = generate_agents_table()
+    if has_work:
+        email.add_section(f"🤖 全体Agent工作状态（共{agent_count}个，有工作记录已高亮）", "🤖", agents_html)
+    else:
+        email.add_section(f"🤖 全体Agent工作状态（共{agent_count}个）", "🤖", agents_html)
+    
+    # 4. 添加统计
+    email.add_stats_bar([
+        {'icon': '🦞', 'label': '权权管家任务', 'value': f"{len([w for w in quanquan_work if w != '今日暂无工作记录'])} 项"},
+        {'icon': '🚀', 'label': 'Agent优化', 'value': f"{opt_count} 项"},
+        {'icon': '🤖', 'label': 'Agent总数', 'value': f"{agent_count} 个"},
+        {'icon': '📅', 'label': '日期', 'value': date_str},
+    ])
+    
+    # 生成纯文本版本
+    text_content = f"""📋 每日工作日报 - {date_str}
+
+🦞 权权管家今日工作:
+"""
+    for item in quanquan_work:
+        text_content += f"  • {item}\n"
+    
+    text_content += f"\n🚀 今日Agent优化（{opt_count}项）:\n"
+    if opt_count > 0:
+        opts = get_today_optimizations_for_date(target_date)
+        for opt in opts:
+            text_content += f"  • [{opt['type']}] {opt['agent']}: {opt['description']}\n"
+    
+    text_content += f"\n🤖 全体Agent工作状态（共{agent_count}个）:\n"
+    text_content += "  详见HTML邮件表格\n"
+    
+    text_content += "\n🦞 权权管家指挥中心自动生成"
+    
+    return email.render(), text_content
+
+
+def get_quanquan_work_for_date(date):
+    """获取指定日期的权权管家工作记录"""
+    import re
+    memory_file = MEMORY_DIR / f"{date.strftime('%Y-%m-%d')}.md"
+
+    if not memory_file.exists():
+        return ['当日暂无工作记录']
+
+    content = memory_file.read_text(encoding='utf-8')
+    work_items = []
+
+    # 原有模式匹配
+    patterns = [
+        r"- \[权权管家\] (.+)",
+        r"- \[AI\] (.+)",
+        r"- \[我\] (.+)",
+        r"- \[暴躁小龙虾\] (.+)"
+    ]
+
+    for pattern in patterns:
+        matches = re.findall(pattern, content)
+        work_items.extend(matches)
+
+    # 匹配 ### 时间 格式的日程
+    schedule_pattern = r"###\s+(\d{2}:\d{2}(?:\s+-\s+\d{2}:\d{2})?)\s+(.+)"
+    schedule_matches = re.findall(schedule_pattern, content)
+    for time_range, task in schedule_matches:
+        work_items.append(f"[{time_range}] {task.strip()}")
+
+    # 匹配 ## ✅ 完成事项 下的列表
+    in_completed_section = False
+    for line in content.split('\n'):
+        line = line.strip()
+
+        # 检测是否进入完成事项区块
+        if any(marker in line for marker in ['## ✅', '## 完成', '### ✅', '### 完成', '## 📋', '## 今日完成']):
+            in_completed_section = True
+            continue
+
+        # 检测离开完成事项区块（遇到新的 ## 标题）
+        if in_completed_section and line.startswith('## ') and not any(marker in line for marker in ['完成', '✅']):
+            in_completed_section = False
+            continue
+
+        # 在完成事项区块内，匹配 - [x] 或 - 开头的任务
+        if in_completed_section:
+            if line.startswith('- [x]') or line.startswith('- [X]'):
+                item = line.replace('- [x]', '').replace('- [X]', '').strip()
+                if item and item not in work_items:
+                    work_items.append(item)
+            elif line.startswith('- ') and not line.startswith('- [ ]'):
+                item = line[2:].strip()
+                # 过滤掉子任务和空行
+                if item and len(item) > 3 and not item.startswith('-') and not item.startswith('*'):
+                    # 去掉 **加粗** 标记
+                    item = re.sub(r'\*\*(.+?)\*\*', r'\1', item)
+                    if item not in work_items:
+                        work_items.append(item)
+
+    # 匹配 - **xxx**: 格式的条目（原有逻辑）
+    for line in content.split('\n'):
+        if line.startswith('- **') and any(k in line for k in ['完成', '修复', '创建', '配置', '部署', '优化', '添加', '更新', '设置', '生成', '推送', '翻译', '备份', '修复', '新增']):
+            item = line.lstrip('- **').rstrip('**').strip()
+            # 过滤掉元数据
+            if not any(skip in item.lower() for skip in ['最后更新', 'agent 总数', '分类数量']):
+                if item not in work_items:
+                    work_items.append(item)
+
+    return work_items if work_items else ['当日暂无工作记录']
+
+
+def generate_quanquan_section_for_date(target_date):
+    """生成指定日期的权权管家工作模块"""
+    work_items = get_quanquan_work_for_date(target_date)
+    
+    html = '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white; margin-bottom: 20px;">'
+    html += '<h3 style="margin-top: 0; font-size: 18px;">🦞 权权管家今日工作</h3>'
+    html += '<ul style="margin: 0; padding-left: 20px;">'
+    
+    for item in work_items:
+        html += f'<li style="margin: 8px 0;">{item}</li>'
+    
+    html += '</ul></div>'
+    return html, work_items
+
+
+def generate_optimization_section_for_date(target_date):
+    """生成指定日期的Agent优化追踪模块"""
+    # 这里简化处理，使用通用的优化检测
+    optimizations = get_today_optimizations_for_date(target_date)
+    
+    if not optimizations:
+        return None, 0
+    
+    html = '<div style="background: #0d7377; padding: 20px; border-radius: 12px; margin-bottom: 20px;">'
+    html += f'<h3 style="margin-top: 0; font-size: 18px; color: #fff;">🚀 今日Agent优化（{len(optimizations)}项）</h3>'
+    html += '<div style="overflow: auto; max-height: 400px;">'
+    html += '<table style="width: 100%; min-width: 600px; font-size: 14px; border-collapse: collapse;">'
+    html += '<tr style="background: rgba(0,0,0,0.3);">'
+    html += '<th style="text-align: left; padding: 12px; font-weight: 600; color: #fff; width: 25%;">Agent名称</th>'
+    html += '<th style="text-align: left; padding: 12px; font-weight: 600; color: #fff; width: 15%;">类型</th>'
+    html += '<th style="text-align: left; padding: 12px; font-weight: 600; color: #fff; width: 60%;">优化内容</th>'
+    html += '</tr>'
+    
+    for opt in optimizations:
+        html += f'<tr style="background: rgba(255,255,255,0.95); border-bottom: 1px solid rgba(0,0,0,0.1);">'
+        html += f'<td style="padding: 12px; font-weight: 500; color: #000;">{opt["agent"]}</td>'
+        html += f'<td style="padding: 12px;"><span style="background: #0d7377; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; color: #fff;">{opt["type"]}</span></td>'
+        html += f'<td style="padding: 12px; line-height: 1.6; color: #000;">{opt["description"]}</td>'
+        html += '</tr>'
+    
+    html += '</table></div></div>'
+    return html, len(optimizations)
+
+
+def get_today_optimizations_for_date(target_date):
+    """获取指定日期的优化记录"""
+    import re
+    memory_file = MEMORY_DIR / f"{target_date.strftime('%Y-%m-%d')}.md"
+    
+    if not memory_file.exists():
+        return []
+    
+    content = memory_file.read_text(encoding='utf-8')
+    optimizations = []
+    
+    # 查找优化相关的记录
+    patterns = [
+        (r'- \[优化\] (.+)', '优化'),
+        (r'- \[改进\] (.+)', '改进'),
+        (r'- \[重构\] (.+)', '重构'),
+        (r'- \[更新\] (.+)', '更新'),
+    ]
+    
+    for pattern, opt_type in patterns:
+        matches = re.findall(pattern, content)
+        for match in matches:
+            optimizations.append({
+                'agent': '系统',
+                'type': opt_type,
+                'description': match
+            })
+    
+    return optimizations
     
     # 使用统一模板
     email = create_daily_email("📋 每日工作日报", f"{date_str} · 权权管家指挥中心")
@@ -358,6 +551,18 @@ def send_email(subject, html_content, text_content, to_email=None):
         return False
 
 
+def send_daily_report_for_date(year, month, day, to_email=None):
+    """发送指定日期的日报"""
+    target_date = datetime(year, month, day)
+    date_str = target_date.strftime("%Y年%m月%d日")
+    
+    html_report, text_report = generate_daily_report_for_date(target_date)
+    
+    subject = f"📋 日报 - {date_str}"
+    success = send_email(subject, html_report, text_report, to_email)
+    return success
+
+
 def main():
     """主函数"""
     import argparse
@@ -365,18 +570,32 @@ def main():
     parser = argparse.ArgumentParser(description='日报生成与发送')
     parser.add_argument('--send', action='store_true', help='立即发送日报')
     parser.add_argument('--preview', action='store_true', help='预览日报内容')
+    parser.add_argument('--date', type=str, help='指定日期 (YYYY-MM-DD)')
     
     args = parser.parse_args()
     
-    html_report, text_report = generate_daily_report()
+    if args.date:
+        # 指定日期模式
+        try:
+            year, month, day = map(int, args.date.split('-'))
+            target_date = datetime(year, month, day)
+            html_report, text_report = generate_daily_report_for_date(target_date)
+            date_str = target_date.strftime("%Y年%m月%d日")
+        except ValueError:
+            print("错误: 日期格式应为 YYYY-MM-DD")
+            sys.exit(1)
+    else:
+        # 当前日期模式
+        target_date = datetime.now()
+        html_report, text_report = generate_daily_report_for_date(target_date)
+        date_str = target_date.strftime("%Y年%m月%d日")
     
     if args.preview:
         print(text_report)
         return
     
     if args.send:
-        today = datetime.now().strftime("%Y年%m月%d日")
-        subject = f"📋 日报 - {today}"
+        subject = f"📋 日报 - {date_str}"
         success = send_email(subject, html_report, text_report)
         sys.exit(0 if success else 1)
     
