@@ -21,7 +21,7 @@ if len(content) > MAX_LEN:
 
 result = subprocess.run(
     [
-        "openclaw", "message", "send",
+        "/root/.nvm/versions/node/v22.22.0/bin/openclaw", "message", "send",
         "--channel", "feishu",
         "--target", TARGET,
         "--message", content,
