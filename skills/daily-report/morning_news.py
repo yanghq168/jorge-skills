@@ -41,10 +41,10 @@ AI_SOURCES = {
 
 # ============ 区块链新闻源 ============
 BLOCKCHAIN_SOURCES = {
-    "chainnews": {"name": "链闻", "rss": "https://www.chainnews.com/rss"},
+    # "chainnews": {"name": "链闻", "rss": "https://www.chainnews.com/rss"},  # 网站已关闭
     "odaily": {"name": "Odaily", "rss": "https://www.odaily.news/rss"},
-    "panews": {"name": "PANews", "rss": "https://www.panewslab.com/rss"},
-    "blockbeats": {"name": "BlockBeats", "rss": "https://www.theblockbeats.info/rss"},
+    # "panews": {"name": "PANews", "rss": "https://www.panewslab.com/rss"},  # 404
+    # "blockbeats": {"name": "BlockBeats", "rss": "https://www.theblockbeats.info/rss"},  # 404
     "cointelegraph": {"name": "Cointelegraph", "rss": "https://cointelegraph.com/rss"},
     "coindesk": {"name": "CoinDesk", "rss": "https://www.coindesk.com/arc/outboundfeeds/rss/"},
 }
