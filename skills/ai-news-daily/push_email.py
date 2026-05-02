@@ -338,7 +338,7 @@ def send_news_email():
     # 构建邮件
     msg = MIMEMultipart('alternative')
     msg['Subject'] = f"📰 AI 每日新闻 - {date_str}"
-    msg['From'] = f"=?utf-8?b?6Jm+5Yiq5Lym5ZGY5qGf6IqC6L+H5Y+v55CG77yI6Jm+6Jm+5Lym5ZGY6aKd6IqC6L+H5Y+v55CG77yJ?= <{smtp_user}>"
+    msg['From'] = f"=?utf-8?b?5p2D5p2D566h5a62?= <{smtp_user}>"
     msg['To'] = to_email
     
     # 添加纯文本和HTML
